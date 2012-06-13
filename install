@@ -1,0 +1,421 @@
+#!/bin/bash
+#Wordpress installation script.
+#set -x
+
+
+GIT_LOGIN=`cat $HOME/.wpinst.cfg`
+if [ "x$GIT_LOGIN" = "x" ]; then
+    echo "Git login information not found - please check .wpisnt.cfg or run:
+echo 'username:password' > $HOME/.wpinst.cfg
+";
+    exit 0;
+fi
+
+if [ "$1" = "--help" ]; then
+    echo "
+    ----------- wpinstaller 0.9 -----------------
+Usage: wpinstaller [client name][username][password][domain][environment]
+
+[environment] may be one of 'Local', 'Development', or 'Production'
+
+The commandline arguments MUST ALL EXIST and be IN THE CORRECT ORDER 
+- OTHERWISE GIVE NO ARGUMENTS and enter the information when prompted.
+
+*NOTE* 'client name' _must_ be in single or double quotes 
+if there are spaces!
+    ";
+    exit 0;
+fi
+
+#support for command line args ..
+CLIENT_NAME=$1
+CLIENT_USERNAME=$2
+CLIENT_PASSWORD=$3
+CLIENT_DOMAIN=$4
+DEPLOY_ENV=$5
+CONTACT_NAME=$6
+CONTACT_EMAIL=$8
+BLOG_DESCRIPTION=$9
+
+# set up dialog
+USEDIALOG="yes"
+DIALOG=`which dialog`
+if [ "x$DIALOG" = "x" ]; then
+  DIALOG=`which whiptail`
+fi
+if [ "x$DIALOG" = "x" ]; then
+    USEDIALOG="no"
+      echo "Your machine doesn't appear to have 'whiptail' nor 'dialog' installed so I can't make the UI pretty for you! You may install them if you like and run this script again after doing so but I cannot help you with that process.";
+fi
+
+#uncomment this to test text only mode ..
+#USEDIALOG="no"
+
+###################
+#collect info if not passed on cmdline ..
+###################
+# Try to use a nice dialog interface ..
+#
+#fixme: this works only if no args passed .. make smarter.
+###################
+
+if [ "$USEDIALOG" = "yes" ]; then
+    : ${DIALOG_OK=0}
+    : ${DIALOG_CANCEL=1}
+    : ${DIALOG_HELP=2}
+    : ${DIALOG_EXTRA=3}
+    : ${DIALOG_ITEM_HELP=4}
+    : ${DIALOG_ESC=255}
+
+    tempfile=`tempfile 2>/dev/null` || tempfile=/tmp/test$$
+    trap "rm -f $tempfile" 0 1 2 5 15
+
+    if [ "x$DEPLOY_ENV" = "x" ]; then    
+        MSG='Please select an environment:'
+        TTL='DEPLOY ENVIRONMENT'
+    $DIALOG --backtitle "The Portland Company" --title "$TTL" --clear  \
+            --radiolist "
+            Please select an environment\n\
+		    You can use the \n\
+		    up or down arrow keys, the first letter of the choice as a \n\
+		    hot key, or the number keys 1-9 to choose an option. \n\
+		    Press SPACE to toggle an option on/off. \n\n " 20 61 5 \
+            "Local"			"Local machine" ON \
+            "Development"	"Remote  development " off \
+            "Production"	"Remote  production " off  2> $tempfile
+
+    retval=$?
+
+    case $retval in
+    $DIALOG_OK)
+        DEPLOY_ENV=`cat $tempfile`;;
+    $DIALOG_CANCEL)
+        echo "Cancel pressed."
+        exit 0;
+        ;;
+        *)
+        echo "Unknown key - aborting."
+        exit 0;
+        ;;
+    esac
+        
+    fi
+
+    if [ "x$CLIENT_NAME" = "x" ]; then    
+        MSG='Please enter the client name:'
+        TTL='CLIENT NAME'
+
+        exec 3>&1
+        RESULT=`$DIALOG --title "$TTL" --clear  "$@" --inputbox "$MSG" 8 51 2>&1 1>&3`
+        retval=$?
+        exec 3>&-
+
+        case $retval in
+        $DIALOG_OK)
+            CLIENT_NAME=$RESULT;;
+        $DIALOG_CANCEL)
+            echo "Cancel pressed."
+            exit 1;;
+        *)
+            echo "Unknown key pressed."
+            exit 1;;
+        esac
+    fi
+
+    if [ "x$CLIENT_USERNAME" = "x" ]; then    
+        MSG='Please enter the client username:'
+        TTL='USERNAME'
+
+        exec 3>&1
+        RESULT=`$DIALOG --title "$TTL" --clear  "$@" --inputbox "$MSG" 8 51 2>&1 1>&3`
+        retval=$?
+        exec 3>&-
+
+        case $retval in
+        $DIALOG_OK)
+            CLIENT_USERNAME=$RESULT;;
+        $DIALOG_CANCEL)
+            echo "Cancel pressed."
+            exit 1;;
+        *)
+            echo "Unknown key pressed."
+            exit 1;;
+        esac
+    fi
+
+    if [ "x$CLIENT_PASSWORD" = "x" ]; then
+        MSG='Please enter the client password:'
+        TTL='PASSWORD'
+
+        exec 3>&1
+        RESULT=`$DIALOG --title "$TTL" --clear  "$@" --inputbox "$MSG" 8 51 2>&1 1>&3`
+        retval=$?
+        exec 3>&-
+
+        case $retval in
+        $DIALOG_OK)
+            CLIENT_PASSWORD=$RESULT;;
+        $DIALOG_CANCEL)
+            echo "Cancel pressed."
+            exit 1;;
+        *)
+            echo "Unknown key pressed."
+            exit 1;;
+        esac
+    fi
+    if [ "x$CLIENT_DOMAIN" = "x" ]; then    
+        MSG='Please enter the client domain name:'
+        TTL='DOMAIN NAME'
+
+        exec 3>&1
+        RESULT=`$DIALOG --title "$TTL" --clear "$@" --inputbox "$MSG" 8 51 2>&1 1>&3`
+        retval=$?
+        exec 3>&-
+
+        case $retval in
+        $DIALOG_OK)
+            CLIENT_DOMAIN=$RESULT;;
+        $DIALOG_CANCEL)
+            echo "Cancel pressed."
+            exit 1;;
+        *)
+            echo "Unknown key pressed."
+            exit 1;;
+        esac
+    fi    
+else
+ #######################
+#  No dialog available .. go old school ..
+    if [ "x$DEPLOY_ENV" = "x" ]; then
+        echo
+        echo "-------------Set ENVIRONMENT------------------------"
+        echo 'Please enter an environment (Ctrl+c to abort):'
+        echo "(Options 'Local','Development', 'Production')"
+        read -e DEPLOY_ENV
+    fi
+    if [ "x$CLIENT_NAME" = "x" ]; then    
+        echo
+        echo "-----------------Set CLIENT NAME------------------------"
+        echo 'Please enter the clients name (Ctrl+c to abort):'
+        read -e CLIENT_NAME
+    fi
+    if [ "x$CLIENT_USERNAME" = "x" ]; then    
+        echo
+        echo "-----------------Set CLIENT USERNAME------------------------"
+        echo 'Please enter the clients username (Ctrl+c to abort):'
+        read -e CLIENT_USERNAME
+    fi
+    if [ "x$CLIENT_PASSWORD" = "x" ]; then
+        echo
+        echo "-----------------Set CLIENT PASSWORD------------------------"
+        echo 'Please enter the clients password (Ctrl+c to abort):'
+        read -e CLIENT_PASSWORD
+    fi
+    if [ "x$CLIENT_DOMAIN" = "x" ]; then    
+        echo
+        echo "-----------------Set CLIENT DOMAIN NAME------------------------"
+        echo 'Please enter the client domain name (without www) (Ctrl+c to abort):'
+        read -e CLIENT_DOMAIN
+    fi
+fi # end oldschool prompts
+
+#########################
+#Action ..
+#########################
+
+CLIENT_NAME_FIXED=`echo $CLIENT_NAME | tr -s '[:blank:]' '-' | tr '[:upper:]' '[:lower:]' `
+CONTACT_FIRSTNAME=`echo $CONTACT_NAME | cut -d' ' -f1`
+CONTACT_LASTNAME=`echo $CONTACT_NAME | cut -d' ' -f2`
+
+#--------- Important Configurations ---------------#
+# These may be changed to suit - but, if you leave ADM_DB_USER empty it will fail. 
+
+case $DEPLOY_ENV in
+    "Local")
+        BASEDIR="$HOME/Sites/"
+        ADM_DB_USER="root"
+        ADM_DB_PASS=""
+        WP_DATABASE=$CLIENT_USERNAME
+        MYSQL="/usr/local/mysql/bin/mysql"
+        ;;
+    "Development")
+        BASEDIR="/var/www/vhosts/theportlandcompany.com/"
+        ADM_DB_USER="$CLIENT_USERNAME"
+        ADM_DB_PASS="$CLIENT_PASSWORD"
+        WP_DATABASE="d363f86b_$CLIENT_USERNAME"
+        MYSQL=`which mysql`
+        ;;
+    "Production")
+        BASEDIR="/var/www/vhosts/"
+        ADM_DB_USER="$CLIENT_USERNAME"
+        ADM_DB_PASS="$CLIENT_PASSWORD"
+        WP_DATABASE=${CLIENT_USERNAME}_${CLIENT_USERNAME}
+        MYSQL=`which mysql`
+        ;;
+        *)
+        echo "Unknown option for development environment: $DEPLOY_ENV - aborting."
+        exit
+        ;;
+esac
+
+#cater to mysql; -p with no password prompts ..
+if [ "x$ADM_DB_PASS" = "x" ]; then
+    ADM_DB_LOGIN=" -u $ADM_DB_USER"
+else
+    ADM_DB_LOGIN=" -u $ADM_DB_USER -p${ADM_DB_PASS} "
+fi
+
+WP_DB_HOST="localhost"
+WP_DB_USER=$CLIENT_USERNAME
+WP_DB_PASS=$CLIENT_PASSWORD
+WP_DB_PRIVILEGES="all privileges"
+WP_CONFIG_FILE="wp-config.php"
+WP_DIR="$BASEDIR$CLIENT_NAME_FIXED/"
+DIALOG_ERROR=254
+export DIALOG_ERROR
+
+if [ "$USEDIALOG" = "yes" ]; then
+
+    $DIALOG --title "Confirm Action" --clear --yesno " 
+   Please check the following details and confirm:
+            
+    Client Name:		$CLIENT_NAME
+    Fixed Client Name:	$CLIENT_NAME_FIXED
+    Username:			$CLIENT_USERNAME
+    Password:			$CLIENT_PASSWORD
+    Domain:				$CLIENT_DOMAIN
+            " 20 61
+
+    retval=$?
+    case $retval in
+    $DIALOG_OK)
+        echo "Now that you've provided me with all the necessary information, I will begin creating configuring the necessary files for the project...";;
+    $DIALOG_CANCEL)
+        echo "You have cancelled this script, no action was taken (meaning no files or anything were created)."
+        exit 0;;
+    *)
+        echo "You have entered a key that isn't recognized so I am canceling this script, no action was taken (meaning no files or anything were created)."
+        exit 0;;
+    esac
+    
+    clear
+else
+    echo " 
+    Please review and confirm the following details:
+    
+    Client Name:		$CLIENT_NAME
+    Fixed Client Name:	$CLIENT_NAME_FIXED
+    Username:			$CLIENT_USERNAME
+    Password:			$CLIENT_PASSWORD
+    Domain:				$CLIENT_DOMAIN
+
+ Shall I continue? (Type the letter 'y' for yes, or 'n' for no and then press enter.)"
+    
+   read answer
+    case $answer in
+        [yY] | '' )
+        echo
+        echo "Excellent, I'll proceed with the rest of the installation process...";;
+        [nN] )
+        echo
+        echo "Okay, I'm going to cancel the rest of the process then. You'll need to restart this script to re-enter the correct information..."
+        echo
+        exit ;;
+        *)
+        echo "Unknown option: $answer - For now I'm aborting this script entirely."
+        exit ;;
+    esac
+fi
+
+echo "Creating a repository on GitHub in the The Portland Company context..."
+
+######### git section: create repo ##########
+gitcmd="{ \"name\": \"$CLIENT_NAME_FIXED\", \"public\": \"true\" }"
+curl -i -u $GIT_LOGIN -X POST -d "$gitcmd" https://api.github.com/orgs/theportlandcompany/repos
+git clone  git@github.com:theportlandcompany/${CLIENT_NAME_FIXED}.git $WP_DIR
+cd $WP_DIR
+git remote add origin git@github.com:theportlandcompany/${CLIENT_NAME_FIXED}.git
+git remote add upstream git@github.com:theportlandcompany/Default-Installation.git
+git pull upstream master
+
+# Unclear if this is necessary - on my account the new repo shows up fine in the _organization_
+# _context_ (which you need to select ..). If that isn't working try uncommenting this:
+#curl -i -u $GIT_LOGIN  -X PUT -H "Content-Length: 0" https://api.github.com/teams/94650/repos/theportlandcompany/$CLIENT_NAME_FIXED
+
+########## end git section ###########
+
+echo
+echo "The newly created repository has been successfully cloned into $WP_DIR on your machine."
+echo
+echo "Now I will configure the wp-config.php file..."
+echo
+
+cp $WP_DIR$WP_CONFIG_FILE $WP_DIR$WP_CONFIG_FILE.old
+cat $WP_DIR$WP_CONFIG_FILE.old | sed -e "s/ut78w4t9/$WP_DB_USER/g" > $WP_DIR$WP_CONFIG_FILE
+cp $WP_DIR$WP_CONFIG_FILE $WP_DIR$WP_CONFIG_FILE.old
+cat $WP_DIR$WP_CONFIG_FILE.old | sed -e "s/08c30c2tfkd3/$WP_DB_PASS/g" > $WP_DIR$WP_CONFIG_FILE
+cp $WP_DIR$WP_CONFIG_FILE $WP_DIR$WP_CONFIG_FILE.old
+cat $WP_DIR$WP_CONFIG_FILE.old | sed -e "s/default-installation.theportlandcompany.com/${CLIENT_NAME_FIXED}.theportlandcompany.com/g" > $WP_DIR$WP_CONFIG_FILE
+cp $WP_DIR$WP_CONFIG_FILE $WP_DIR$WP_CONFIG_FILE.old
+cat $WP_DIR$WP_CONFIG_FILE.old | sed -e "s/default-installation.com/$CLIENT_DOMAIN/g" > $WP_DIR$WP_CONFIG_FILE
+rm $WP_DIR$WP_CONFIG_FILE.old
+
+git push -u origin master
+
+echo
+echo "The wp-config.php file has been successfully configured."
+sleep 1;
+echo
+echo "Now, I'll create the database..."
+
+# Create a database in MySQL using the username (from the first step) as the database name and the database username. Also use the password from step one as the password for that new user and ensure it has privileges to that database.
+$MYSQL $ADM_DB_LOGIN -e "create database $WP_DATABASE"
+$MYSQL $ADM_DB_LOGIN -e "grant $WP_DB_PRIVILEGES on ${WP_DATABASE}.* to $WP_DB_USER identified by '$WP_DB_PASS'"
+
+cp -r ${WP_DIR}wp-content/themes/default-theme ${WP_DIR}wp-content/themes/$CLIENT_NAME_FIXED
+
+sqlfile=${WP_DIR}wp-content/themes/$CLIENT_NAME_FIXED/documents/backup.sql
+cp $sqlfile $sqlfile.old
+cat $sqlfile.old | sed -e "s#localhost/default-installation#localhost/$CLIENT_NAME_FIXED#g" > $sqlfile
+cp $sqlfile $sqlfile.old
+cat $sqlfile.old | sed -e "s/default-installation.theportlandcompany.com/${CLIENT_NAME_FIXED}.theportlandcompany.com/g" > $sqlfile
+rm $sqlfile.old
+
+$MYSQL $ADM_DB_LOGIN $WP_DATABASE < $sqlfile
+$MYSQL $ADM_DB_LOGIN $WP_DATABASE -e "update wp_options set option_value = '$CLIENT_NAME' where option_name = 'current_theme' "
+
+echo
+echo "The database has been successfully created."
+echo
+echo "Now I'm going to take the screenshot.png and shortcut-icon.png that the designer, should have, previously created and put them in the clients theme directory..."
+echo
+
+mv ${WP_DIR}wp-content/themes/$CLIENT_NAME_FIXED/documents/site-design/screenshot.png ${WP_DIR}wp-content/themes/$CLIENT_NAME_FIXED/screenshot.png
+mv ${WP_DIR}wp-content/themes/$CLIENT_NAME_FIXED/documents/site-design/shortcut-icon.png ${WP_DIR}wp-content/themes/$CLIENT_NAME_FIXED/images/shortcut-icon.png
+
+echo
+echo "Okay, now that is done."
+echo
+echo "Finally, I'm going to create .htaccess file so permalinks work properly..."
+
+# Generate an htaccess file
+echo "
+# BEGIN WordPress
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /$CLIENT_NAME_FIXED/
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /$CLIENT_NAME_FIXED/index.php [L]
+</IfModule>
+
+# END WordPress
+
+" > ${WP_DIR}.htaccess
+
+echo
+echo "The htaccess file has been successfully created."
+echo
+echo "This script is now complete! Start coding slave!"
